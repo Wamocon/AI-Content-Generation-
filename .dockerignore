@@ -1,0 +1,99 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+.npm/
+.yarn/
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/.swc/
+
+# Build outputs
+app/static/dist/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+*.md
+docs/
+
+# Tests
+tests/
+frontend/tests/
+*.test.js
+*.test.ts
+*.test.tsx
+__tests__/
+coverage/
+
+# Environment files
+.env
+.env.*
+# personal_*.json - NEEDED in Docker container for personal Google account
+# personal_*.pickle - NEEDED in Docker container for personal Google account
+
+# Logs
+logs/
+*.log
+automation.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Scripts (keeping automation_engine.py for Docker)
+scripts/
+run_dev.bat
+dev.bat
+start.bat
+run_fiae_system.py
+fix_oauth_auto.py
+system_health_check.py
+# automation_engine.py - NEEDED in Docker container
+
+# Package files (we copy specific ones)
+package.json
+package-lock.json
+pyproject.toml
+
+# ChromaDB data (mounted as volume)
+chroma_db/

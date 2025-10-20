@@ -1285,10 +1285,10 @@ async def get_approval_request(approval_id: str):
 @app.post("/hitl/approve/{approval_id}")
 async def approve_content(
     approval_id: str,
-    approved_by: str = "User",
+    approved_by: str = "human_reviewer",
     notes: str = ""
 ):
-    """Approve generated content, update Google Sheets, and move to Done folder."""
+    """Approve generated content and update Google Sheets."""
     try:
         if not google_sheets_service or not google_sheets_service.service:
             raise HTTPException(
@@ -1296,18 +1296,9 @@ async def approve_content(
                 detail="Google Sheets service not available"
             )
         
-        # Get the approval details first
-        approval = google_sheets_service.get_approval_request(approval_id)
-        if not approval:
-            raise HTTPException(
-                status_code=404,
-                detail="Approval request not found"
-            )
-        
-        # Update review status to approved
         success = google_sheets_service.update_approval_status(
             approval_id=approval_id,
-            status="approved",
+            status="APPROVED",
             approved_by=approved_by,
             notes=notes
         )
@@ -1315,29 +1306,13 @@ async def approve_content(
         if not success:
             raise HTTPException(
                 status_code=400,
-                detail="Failed to approve content"
+                detail="Failed to approve content. Check if approval request exists and is pending."
             )
-        
-        # Move folder from Review to Done
-        output_folder_id = approval.get('output_folder_id')
-        if output_folder_id:
-            try:
-                moved = google_sheets_service.move_folder_to_done(
-                    folder_id=output_folder_id,
-                    done_folder_id=settings.google_drive_done_folder_id
-                )
-                if moved:
-                    logger.info(f"✅ Moved folder to Done: {output_folder_id}")
-                else:
-                    logger.warning(f"⚠️ Could not move folder to Done: {output_folder_id}")
-            except Exception as e:
-                logger.warning(f"Error moving folder: {e}")
         
         return {
             "success": True,
-            "message": "Content approved and moved to Done folder",
-            "approval_id": approval_id,
-            "document_name": approval.get('document_name')
+            "message": "Content approved successfully",
+            "approval_id": approval_id
         }
     except HTTPException:
         raise
@@ -1352,10 +1327,10 @@ async def approve_content(
 @app.post("/hitl/reject/{approval_id}")
 async def reject_content(
     approval_id: str,
-    approved_by: str = "User",
-    notes: str = ""
+    notes: str = "",
+    revision_requests: List[str] = None
 ):
-    """Reject generated content (keeps in Review folder for revision)."""
+    """Reject generated content with revision requests."""
     try:
         if not google_sheets_service or not google_sheets_service.service:
             raise HTTPException(
@@ -1363,34 +1338,24 @@ async def reject_content(
                 detail="Google Sheets service not available"
             )
         
-        # Get the approval details
-        approval = google_sheets_service.get_approval_request(approval_id)
-        if not approval:
-            raise HTTPException(
-                status_code=404,
-                detail="Approval request not found"
-            )
-        
-        # Update review status to rejected
         success = google_sheets_service.update_approval_status(
             approval_id=approval_id,
-            status="rejected",
-            approved_by=approved_by,
-            notes=notes
+            status="REJECTED",
+            notes=notes,
+            revision_requests=revision_requests or []
         )
         
         if not success:
             raise HTTPException(
                 status_code=400,
-                detail="Failed to reject content"
+                detail="Failed to reject content. Check if approval request exists and is pending."
             )
         
         return {
             "success": True,
-            "message": "Content rejected - remains in Review folder",
+            "message": "Content rejected with revision requests",
             "approval_id": approval_id,
-            "document_name": approval.get('document_name'),
-            "notes": notes
+            "revision_requests": revision_requests or []
         }
     except HTTPException:
         raise

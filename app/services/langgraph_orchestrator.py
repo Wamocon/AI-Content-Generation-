@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, TypedDict, Annotated
 from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
-from langgraph.graph import StateGraph, END
+    from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -563,9 +563,9 @@ class LangGraphWorkflowOrchestrator:
             state["next_action"] = "quality_check"
             
             logger.info(f"Audio preparation completed for job {state['job_id']}")
-            return state
-            
-        except Exception as e:
+                        return state
+                        
+            except Exception as e:
             logger.error(f"Error in audio preparation: {str(e)}")
             state["last_error"] = str(e)
             state["phase_status"] = "failed"

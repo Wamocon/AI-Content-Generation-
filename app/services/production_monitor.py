@@ -768,8 +768,8 @@ class ProductionMonitor:
     
     async def get_alerts(
         self, 
-        level: Optional[AlertLevel] = None,
-        resolved: Optional[bool] = None,
+        level: Optional[AlertLevel] = None, 
+        resolved: Optional[bool] = None, 
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Get alerts with optional filtering."""

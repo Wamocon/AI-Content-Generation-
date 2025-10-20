@@ -1,0 +1,50 @@
+FROM node:18-alpine AS deps
+WORKDIR /app
+
+# Install dependencies based on the preferred package manager
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci --prefer-offline --no-audit
+
+FROM node:18-alpine AS builder
+WORKDIR /app
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy frontend source code
+COPY frontend/ ./
+
+# Set environment variables for build
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+# Build the Next.js application
+RUN npm run build
+
+FROM node:18-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Copy necessary files from builder
+    # Create public directory (no public assets to copy)
+    RUN mkdir -p ./public
+
+# Copy standalone server files
+COPY --from=builder /app/.next/standalone ./
+
+# Copy static files
+COPY --from=builder /app/.next/static ./.next/static
+
+# Expose port
+EXPOSE 3000
+
+# Set port for Next.js
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Start the application
+CMD ["node", "server.js"]
+
+

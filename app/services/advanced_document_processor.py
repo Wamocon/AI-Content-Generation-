@@ -188,7 +188,7 @@ class AdvancedDocumentProcessor:
     
     async def process_document(
         self, 
-        file_path: str, 
+        file_path: str,
         job_id: str,
         chunking_strategy: ChunkingStrategy = ChunkingStrategy.ADAPTIVE
     ) -> ProcessingResult:
@@ -199,7 +199,7 @@ class AdvancedDocumentProcessor:
             file_path: Path to the document file
             job_id: Unique job identifier
             chunking_strategy: Strategy for chunking the document
-            
+        
         Returns:
             Processing result with semantic chunks and metadata
         """

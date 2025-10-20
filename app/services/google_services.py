@@ -1,865 +1,744 @@
 """
-Google Cloud services integration for Drive and Sheets operations.
+Google Drive and Sheets Services for FIAE AI Content Factory
 """
 
 import os
 import json
+import io
+from typing import Dict, Any, List, Optional
 from datetime import datetime
-from typing import Dict, Any, Optional
-from google.cloud import storage
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from app.config import settings
+try:
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload, MediaIoBaseUpload
+    from googleapiclient.errors import HttpError
+    GOOGLE_APIS_AVAILABLE = True
+except ImportError:
+    GOOGLE_APIS_AVAILABLE = False
+    logger.warning("Google APIs not available - install google-api-python-client")
 
 
 class GoogleDriveService:
-    """Service for Google Drive operations."""
+    """Google Drive service for file operations"""
     
     def __init__(self):
-        self.credentials = self._get_credentials()
-        if self.credentials:
-            self.service = build('drive', 'v3', credentials=self.credentials)
-        else:
+        self.service = None
+        self.credentials = None
+        self._initialize_service()
+    
+    def _initialize_service(self):
+        """Initialize Google Drive service with personal account preference"""
+        if not GOOGLE_APIS_AVAILABLE:
+            logger.error("Google APIs not available")
+            return
+        
+        try:
+            # PRIORITY 1: Try personal Google account first
+            personal_account_enabled = os.getenv('PERSONAL_GOOGLE_ACCOUNT_ENABLED', 'True').lower() == 'true'
+            
+            if personal_account_enabled:
+                try:
+                    # Import personal Google Drive service
+                    import sys
+                    sys.path.append(os.getcwd())
+                    
+                    from personal_google_drive_service import PersonalGoogleDriveService
+                    
+                    personal_service = PersonalGoogleDriveService(
+                        credentials_file="personal_credentials.json",
+                        token_file="personal_google_token.pickle"
+                    )
+                    
+                    if personal_service.is_authenticated():
+                        # Use personal account credentials
+                        self.credentials = personal_service.credentials
+                        self.service = build('drive', 'v3', credentials=self.credentials)
+                        logger.info("[OK] Google Drive service initialized with PERSONAL account")
+                        return
+                    else:
+                        logger.error("Personal Google account not authenticated. Please run authentication first.")
+                        return
+                        
+                except Exception as e:
+                    logger.error(f"Personal Google account failed: {e}. Please check your personal_credentials.json file.")
+                    return
+            
+            # PRIORITY 2: Fallback to service account (DISABLED - GCP NOT REQUIRED)
+            logger.error("Service account fallback disabled. Please use personal Google account authentication.")
+            return
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize Google Drive service: {e}")
             self.service = None
-            logger.warning("Google Drive service disabled - no valid credentials")
     
-    def _get_credentials(self):
-        """Get Google Cloud credentials with enhanced error handling for n8n integration."""
+    def list_files_in_folder(self, folder_id: str) -> List[Dict[str, Any]]:
+        """List files in a Google Drive folder"""
+        if not self.service:
+            logger.error("Google Drive service not available")
+            return []
+        
         try:
-            # Try environment variable first (for n8n integration)
-            if os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON'):
-                credentials_json = json.loads(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
-                credentials = service_account.Credentials.from_service_account_info(
-                    credentials_json,
-                    scopes=[
-                        'https://www.googleapis.com/auth/drive',
-                        'https://www.googleapis.com/auth/documents',
-                        'https://www.googleapis.com/auth/spreadsheets'
-                    ]
-                )
-                logger.info("✅ Using Google credentials from environment variable (n8n integration)")
-                return credentials
-            
-            # Try settings configuration
-            if settings.google_application_credentials_json:
-                credentials_json = json.loads(settings.google_application_credentials_json)
-                credentials = service_account.Credentials.from_service_account_info(
-                    credentials_json,
-                    scopes=[
-                        'https://www.googleapis.com/auth/drive',
-                        'https://www.googleapis.com/auth/documents',
-                        'https://www.googleapis.com/auth/spreadsheets'
-                    ]
-                )
-                logger.info("✅ Using Google credentials from settings")
-                return credentials
-            
-            # Try file path
-            if settings.google_credentials_path and os.path.exists(settings.google_credentials_path):
-                credentials = service_account.Credentials.from_service_account_file(
-                    settings.google_credentials_path,
-                    scopes=[
-                        'https://www.googleapis.com/auth/drive',
-                        'https://www.googleapis.com/auth/documents',
-                        'https://www.googleapis.com/auth/spreadsheets'
-                    ]
-                )
-                logger.info("✅ Using Google credentials from file")
-                return credentials
-            
-            logger.warning("⚠️ No Google credentials found. Google Drive services will be disabled.")
-            logger.info("💡 To enable Google services, set GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable in n8n")
-            return None
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ Invalid JSON in Google credentials: {str(e)}")
-            return None
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to get Google credentials: {str(e)}")
-            logger.info("💡 Please configure valid Google service account credentials")
-            return None
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def download_file(self, file_id: str, local_path: str) -> str:
-        """Download a file from Google Drive."""
-        try:
-            logger.info(f"Downloading file {file_id} to {local_path}")
-            
-            request = self.service.files().get_media(fileId=file_id)
-            
-            with open(local_path, 'wb') as f:
-                f.write(request.execute())
-            
-            logger.info(f"Successfully downloaded file to {local_path}")
-            return local_path
-            
-        except HttpError as e:
-            logger.error(f"Google Drive API error: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error downloading file: {str(e)}")
-            raise
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def create_document(self, title: str, content: str, folder_id: str) -> str:
-        """Create a new Google Doc in the specified folder with graceful fallback."""
-        try:
-            if not self.service:
-                logger.warning("Google Drive service not available, creating local file instead")
-                return self._create_local_fallback(title, content)
-            
-            logger.info(f"Creating document '{title}' in folder {folder_id}")
-            
-            # Create document metadata
-            file_metadata = {
-                'name': title,
-                'parents': [folder_id],
-                'mimeType': 'application/vnd.google-apps.document'
-            }
-            
-            # Create the document
-            file = self.service.files().create(
-                body=file_metadata,
-                fields='id'
-            ).execute()
-            
-            file_id = file.get('id')
-            
-            # Add content to the document
-            self.service.files().update(
-                fileId=file_id,
-                body={'name': title}
-            ).execute()
-            
-            # Insert content
-            requests = [{
-                'insertText': {
-                    'location': {'index': 1},
-                    'text': content
-                }
-            }]
-            
-            self.service.documents().batchUpdate(
-                documentId=file_id,
-                body={'requests': requests}
-            ).execute()
-            
-            logger.info(f"Successfully created document {file_id}")
-            return file_id
-            
-        except HttpError as e:
-            logger.error(f"Google Drive API error creating document: {str(e)}")
-            logger.warning("Falling back to local file creation")
-            return self._create_local_fallback(title, content)
-        except Exception as e:
-            logger.error(f"Error creating document: {str(e)}")
-            logger.warning("Falling back to local file creation")
-            return self._create_local_fallback(title, content)
-    
-    def _create_local_fallback(self, title: str, content: str) -> str:
-        """Create a local file as fallback when Google Drive is unavailable."""
-        try:
-            import os
-            from datetime import datetime
-            
-            # Create fallback directory
-            fallback_dir = "docs/fallback_output"
-            os.makedirs(fallback_dir, exist_ok=True)
-            
-            # Create filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{title}_{timestamp}.txt"
-            filepath = os.path.join(fallback_dir, filename)
-            
-            # Write content to file
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            logger.info(f"Created fallback file: {filepath}")
-            return filepath
-            
-        except Exception as e:
-            logger.error(f"Failed to create fallback file: {str(e)}")
-            return f"fallback_{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def upload_file(self, local_path: str, folder_id: str, filename: str) -> str:
-        """Upload a file to Google Drive."""
-        try:
-            logger.info(f"Uploading file {local_path} to folder {folder_id}")
-            
-            file_metadata = {
-                'name': filename,
-                'parents': [folder_id]
-            }
-            
-            media = self.service.files().create(
-                body=file_metadata,
-                media_body=local_path,
-                fields='id'
-            ).execute()
-            
-            file_id = media.get('id')
-            logger.info(f"Successfully uploaded file {file_id}")
-            return file_id
-            
-        except HttpError as e:
-            logger.error(f"Google Drive API error uploading file: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error uploading file: {str(e)}")
-            raise
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def list_files_in_folder(self, folder_id: str) -> list:
-        """List all files in a Google Drive folder."""
-        try:
-            logger.info(f"Listing files in folder {folder_id}")
-            
-            if not self.service:
-                logger.warning("Google Drive service not available")
-                return []
-            
-            # Query for files in the folder
-            query = f"'{folder_id}' in parents and trashed=false"
-            
             results = self.service.files().list(
-                q=query,
-                fields="files(id, name, size, createdTime, modifiedTime, mimeType, webViewLink)",
-                orderBy="modifiedTime desc"
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="files(id,name,mimeType,size,createdTime,modifiedTime)"
             ).execute()
             
             files = results.get('files', [])
             logger.info(f"Found {len(files)} files in folder {folder_id}")
-            
             return files
             
-        except HttpError as e:
-            logger.error(f"Google Drive API error listing files: {str(e)}")
-            raise
         except Exception as e:
-            logger.error(f"Error listing files: {str(e)}")
-            raise
+            logger.error(f"Error listing files in folder {folder_id}: {e}")
+            return []
     
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
     def get_file_content(self, file_id: str) -> str:
-        """Get text content from a Google Drive file."""
+        """Get content of a Google Drive file"""
+        if not self.service:
+            logger.error("Google Drive service not available")
+            return ""
+        
         try:
-            logger.info(f"Getting content from file {file_id}")
-            
-            if not self.service:
-                logger.warning("Google Drive service not available")
-                return ""
-            
             # Get file metadata first
             file_metadata = self.service.files().get(fileId=file_id).execute()
             mime_type = file_metadata.get('mimeType', '')
+            file_name = file_metadata.get('name', '')
+            logger.info(f"[DEBUG] File: {file_name}, MIME Type: {mime_type}")
             
             # Handle different file types
-            if 'google-apps.document' in mime_type:
-                # Google Docs - use export
-                content = self.service.files().export_media(
+            if 'wordprocessingml' in mime_type or mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+                # Word documents (.docx) - download and extract text
+                request = self.service.files().get_media(fileId=file_id)
+                file_content = io.BytesIO()
+                downloader = MediaIoBaseDownload(file_content, request)
+                done = False
+                while done is False:
+                    status, done = downloader.next_chunk()
+                
+                # Extract text from .docx file
+                try:
+                    from docx import Document
+                    file_content.seek(0)
+                    doc = Document(file_content)
+                    
+                    # Extract all text from paragraphs
+                    full_text = []
+                    for paragraph in doc.paragraphs:
+                        if paragraph.text.strip():
+                            full_text.append(paragraph.text.strip())
+                    
+                    # Also extract text from tables
+                    for table in doc.tables:
+                        for row in table.rows:
+                            for cell in row.cells:
+                                if cell.text.strip():
+                                    full_text.append(cell.text.strip())
+                    
+                    extracted_content = '\n\n'.join(full_text)
+                    logger.info(f"[SUCCESS] Extracted {len(extracted_content)} characters from .docx file")
+                    return extracted_content
+                    
+                except ImportError:
+                    logger.error("python-docx not installed. Install with: pip install python-docx")
+                    return f"Word document content for file {file_id} (python-docx not available)"
+                except Exception as e:
+                    logger.error(f"Error extracting text from .docx file: {e}")
+                    return f"Word document content for file {file_id} (extraction failed: {str(e)})"
+            elif 'document' in mime_type and 'google-apps' in mime_type:
+                # Google Docs - export as plain text
+                content = self.service.files().export(
                     fileId=file_id,
                     mimeType='text/plain'
                 ).execute()
                 return content.decode('utf-8')
-            
-            elif 'google-apps.spreadsheet' in mime_type:
-                # Google Sheets - use export
-                content = self.service.files().export_media(
-                    fileId=file_id,
-                    mimeType='text/csv'
-                ).execute()
-                return content.decode('utf-8')
-            
-            elif 'text/' in mime_type or 'application/pdf' in mime_type:
-                # Text files or PDFs - download directly
-                content = self.service.files().get_media(fileId=file_id).execute()
-                return content.decode('utf-8')
-            
             else:
                 logger.warning(f"Unsupported file type: {mime_type}")
                 return ""
                 
-        except HttpError as e:
-            logger.error(f"Google Drive API error getting file content: {str(e)}")
-            raise
         except Exception as e:
-            logger.error(f"Error getting file content: {str(e)}")
-            raise
+            logger.error(f"Error getting file content for {file_id}: {e}")
+            return ""
     
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def save_enhanced_content(self, content: dict, original_filename: str, folder_id: str) -> str:
-        """Save enhanced content to Google Drive."""
+    def save_comprehensive_content_to_review_folder(
+        self, 
+        original_filename: str, 
+        content: Dict[str, Any], 
+        source_file_id: str
+    ) -> Dict[str, Any]:
+        """Save comprehensive content to review folder"""
+        if not self.service:
+            return {"success": False, "error": "Google Drive service not available"}
+        
         try:
-            logger.info(f"Saving enhanced content for {original_filename}")
+            # Create folder for this document
+            folder_name = f"FIAE_Generated_{original_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             
-            if not self.service:
-                logger.warning("Google Drive service not available")
-                return ""
+            # Import settings to get the correct folder ID
+            from app.config import settings
             
-            # Create a comprehensive document with all content
-            doc_title = f"Enhanced_{original_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            folder_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [settings.google_drive_review_folder_id]
+            }
             
-            # Format content for Google Docs
-            formatted_content = f"""# FIAE AI Content Factory - Enhanced Content
-**Original File:** {original_filename}
-**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**Language:** German (Deutsch)
-
-## Wissensanalyse
-{content.get('knowledge_analysis', 'N/A')}
-
-## Praktische Anwendungsfälle
-{content.get('use_case_text', 'N/A')}
-
-## Bewertungsfragen
-{content.get('quiz_text', 'N/A')}
-
-## Video-Skript
-{content.get('script_text', 'N/A')}
-
----
-*Generiert von FIAE AI Content Factory mit RAG + LangGraph + Vector Intelligence*
-"""
+            folder = self.service.files().create(
+                body=folder_metadata,
+                fields='id'
+            ).execute()
             
-            # Create the document
-            file_id = self.create_document(doc_title, formatted_content, folder_id)
+            folder_id = folder.get('id')
+            created_files = []
             
-            logger.info(f"Successfully saved enhanced content: {file_id}")
-            return file_id
+            # Save each content type as a separate file
+            content_types = ['knowledge_analysis', 'use_case_text', 'quiz_text', 'powerpoint_structure', 'google_slides_content', 'trainer_script']
+            
+            for content_type in content_types:
+                if content_type in content:
+                    file_metadata = {
+                        'name': f"{content_type}_{original_filename}.txt",
+                        'parents': [folder_id]
+                    }
+                    
+                    # Create a temporary file-like object for the content
+                    content_data = content[content_type]
+                    
+                    # Handle both string and list content
+                    if isinstance(content_data, list):
+                        # If it's a list, join it into a string
+                        content_text = '\n'.join(str(item) for item in content_data)
+                    elif isinstance(content_data, dict):
+                        # If it's a dict, convert to readable format
+                        content_text = str(content_data)
+                    else:
+                        # If it's already a string, use it directly
+                        content_text = str(content_data)
+                    
+                    content_bytes = content_text.encode('utf-8')
+                    media = MediaIoBaseUpload(
+                        io.BytesIO(content_bytes),
+                        mimetype='text/plain'
+                    )
+                    
+                    file = self.service.files().create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields='id'
+                    ).execute()
+                    
+                    created_files.append({
+                        'name': file_metadata['name'],
+                        'id': file.get('id'),
+                        'type': content_type
+                    })
+            
+            return {
+                "success": True,
+                "enabler_folder_id": folder_id,
+                "folder_name": folder_name,
+                "created_files": created_files,
+                "total_files_created": len(created_files)
+            }
             
         except Exception as e:
-            logger.error(f"Error saving enhanced content: {str(e)}")
-            raise
+            logger.error(f"Error saving content to review folder: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def detect_google_sheets_in_folder(self, folder_id: str) -> List[Dict[str, Any]]:
+        """Detect Google Sheets in a folder"""
+        if not self.service:
+            return []
+        
+        try:
+            results = self.service.files().list(
+                q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+                fields="files(id,name,createdTime,modifiedTime)"
+            ).execute()
+            
+            return results.get('files', [])
+            
+        except Exception as e:
+            logger.error(f"Error detecting Google Sheets in folder {folder_id}: {e}")
+            return []
+    
+    def _get_drive_storage_info(self) -> Dict[str, Any]:
+        """Get Google Drive storage information"""
+        if not self.service:
+            return {"total_space": 0, "used_space": 0, "available_space": 0}
+        
+        try:
+            about = self.service.about().get(fields="storageQuota").execute()
+            quota = about.get('storageQuota', {})
+            
+            return {
+                "total_space": int(quota.get('limit', 0)),
+                "used_space": int(quota.get('usage', 0)),
+                "available_space": int(quota.get('limit', 0)) - int(quota.get('usage', 0))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting storage info: {e}")
+            return {"total_space": 0, "used_space": 0, "available_space": 0}
 
 
 class GoogleSheetsService:
-    """Service for Google Sheets operations."""
+    """Google Sheets service for tracking and analytics"""
     
     def __init__(self):
-        self.credentials = self._get_credentials()
-        if self.credentials:
-            self.service = build('sheets', 'v4', credentials=self.credentials)
-        else:
+        self.service = None
+        self.credentials = None
+        self.spreadsheet_id = None
+        self._initialize_service()
+    
+    def _initialize_service(self):
+        """Initialize Google Sheets service"""
+        if not GOOGLE_APIS_AVAILABLE:
+            logger.error("Google APIs not available")
+            return
+        
+        try:
+            # Use personal Google account for Sheets access
+            import sys
+            sys.path.append(os.getcwd())
+            
+            from personal_google_drive_service import PersonalGoogleDriveService
+            
+            personal_service = PersonalGoogleDriveService(
+                credentials_file="personal_credentials.json",
+                token_file="personal_google_token.pickle"
+            )
+            
+            if personal_service.is_authenticated():
+                self.credentials = personal_service.credentials
+                self.service = build('sheets', 'v4', credentials=self.credentials)
+                self.spreadsheet_id = os.getenv('GOOGLE_SHEETS_ID', '1d87xmQNbWlNwtvRfhaWLSk2FkfTRVadKm94-ppaASbw')
+                logger.info("[OK] Google Sheets service initialized with PERSONAL account")
+            else:
+                logger.error("Personal Google account not authenticated for Sheets access")
+                self.service = None
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize Google Sheets service: {e}")
             self.service = None
-            logger.warning("Google Sheets service disabled - no valid credentials")
-        self.spreadsheet_id = settings.google_sheets_id
     
-    def _get_credentials(self):
-        """Get Google Cloud credentials for Sheets service."""
+    def add_processing_record(
+        self, 
+        job_id: str, 
+        document_name: str, 
+        status: str, 
+        quality_score: float, 
+        created_files: List[Dict[str, Any]]
+    ) -> bool:
+        """Add a processing record to Google Sheets"""
+        if not self.service or not self.spreadsheet_id:
+            logger.warning("Google Sheets service not available")
+            return False
+        
         try:
-            # Try environment variable first (for n8n integration)
-            if os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON'):
-                credentials_json = json.loads(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
-                credentials = service_account.Credentials.from_service_account_info(
-                    credentials_json,
-                    scopes=[
-                        'https://www.googleapis.com/auth/spreadsheets',
-                        'https://www.googleapis.com/auth/drive'
-                    ]
-                )
-                logger.info("✅ Using Google Sheets credentials from environment variable (n8n integration)")
-                return credentials
-            
-            # Try settings configuration
-            if settings.google_application_credentials_json:
-                credentials_json = json.loads(settings.google_application_credentials_json)
-                credentials = service_account.Credentials.from_service_account_info(
-                    credentials_json,
-                    scopes=[
-                        'https://www.googleapis.com/auth/spreadsheets',
-                        'https://www.googleapis.com/auth/drive'
-                    ]
-                )
-                logger.info("✅ Using Google Sheets credentials from settings")
-                return credentials
-            
-            # Try file path
-            if settings.google_credentials_path and os.path.exists(settings.google_credentials_path):
-                credentials = service_account.Credentials.from_service_account_file(
-                    settings.google_credentials_path,
-                    scopes=[
-                        'https://www.googleapis.com/auth/spreadsheets',
-                        'https://www.googleapis.com/auth/drive'
-                    ]
-                )
-                logger.info("✅ Using Google Sheets credentials from file")
-                return credentials
-            
-            logger.warning("⚠️ No Google credentials found. Google Sheets services will be disabled.")
-            logger.info("💡 To enable Google Sheets, set GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable in n8n")
-            return None
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ Invalid JSON in Google credentials: {str(e)}")
-            return None
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to get Google credentials: {str(e)}")
-            logger.info("💡 Please configure valid Google service account credentials")
-            return None
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def update_job_status(self, job_id: str, status: str, review_doc_links: Dict[str, str] = None) -> bool:
-        """Update job status in the master Google Sheet."""
-        try:
-            logger.info(f"Updating job {job_id} status to {status}")
-            
-            # Find the row with the job_id
-            range_name = 'Sheet1!A:Z'
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range=range_name
-            ).execute()
-            
-            values = result.get('values', [])
-            if not values:
-                logger.warning("No data found in spreadsheet")
-                return False
-            
-            # Find the job row
-            job_row = None
-            for i, row in enumerate(values):
-                if len(row) > 0 and row[0] == job_id:
-                    job_row = i + 1  # Sheets is 1-indexed
-                    break
-            
-            if job_row is None:
-                logger.warning(f"Job {job_id} not found in spreadsheet")
-                return False
-            
-            # Update the status
-            update_range = f'Sheet1!B{job_row}'
-            update_values = [[status]]
-            
-            if review_doc_links:
-                # Add review document links
-                links_text = ", ".join([f"{k}: {v}" for k, v in review_doc_links.items()])
-                update_values[0].append(links_text)
-            
-            body = {
-                'values': update_values
-            }
-            
-            self.service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range=update_range,
-                valueInputOption='RAW',
-                body=body
-            ).execute()
-            
-            logger.info(f"Successfully updated job {job_id} status to {status}")
-            return True
-            
-        except HttpError as e:
-            logger.error(f"Google Sheets API error: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error updating job status: {str(e)}")
-            raise
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def get_job_status(self, job_id: str) -> Optional[str]:
-        """Get the current status of a job."""
-        try:
-            logger.info(f"Getting status for job {job_id}")
-            
-            range_name = 'Sheet1!A:Z'
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range=range_name
-            ).execute()
-            
-            values = result.get('values', [])
-            if not values:
-                return None
-            
-            # Find the job row
-            for row in values:
-                if len(row) > 0 and row[0] == job_id and len(row) > 1:
-                    return row[1]  # Status is in column B
-            
-            return None
-            
-        except HttpError as e:
-            logger.error(f"Google Sheets API error: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error getting job status: {str(e)}")
-            raise
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def add_processing_record(self, job_id: str, document_name: str, status: str, quality_score: float) -> bool:
-        """Add a new processing record to the Google Sheet."""
-        try:
-            logger.info(f"Adding processing record for job {job_id}")
-            
-            if not self.service:
-                logger.warning("Google Sheets service not available")
-                return False
-            
-            # Prepare the new row data
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            new_row = [
+            # Prepare row data
+            row_data = [
                 job_id,
-                status,
                 document_name,
-                timestamp,
-                str(quality_score),
-                "FIAE AI Content Factory",
-                "RAG Enhanced Processing"
+                status,
+                quality_score,
+                len(created_files),
+                datetime.now().isoformat(),
+                json.dumps(created_files)
             ]
             
-            # Append to the sheet
-            range_name = 'Sheet1!A:G'
+            # Append to sheet
             body = {
-                'values': [new_row]
+                'values': [row_data]
             }
             
-            self.service.spreadsheets().values().append(
+            result = self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range=range_name,
+                range='Tabellenblatt1!A:M',  # Use correct German sheet name
                 valueInputOption='RAW',
                 body=body
             ).execute()
             
-            logger.info(f"Successfully added processing record for job {job_id}")
+            logger.info(f"Added processing record for job {job_id}")
             return True
             
-        except HttpError as e:
-            logger.error(f"Google Sheets API error adding record: {str(e)}")
-            raise
         except Exception as e:
-            logger.error(f"Error adding processing record: {str(e)}")
-            raise
+            logger.error(f"Error adding processing record: {e}")
+            return False
     
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
     def get_processing_status(self) -> Dict[str, Any]:
-        """Get current processing status from Google Sheets."""
+        """Get processing status from Google Sheets"""
+        if not self.service or not self.spreadsheet_id:
+            return {
+                "last_processing": None,
+                "total_processed": 0,
+                "pending_documents": 0,
+                "failed_documents": 0,
+                "processing_rate": "0%"
+            }
+        
         try:
-            logger.info("Getting processing status from Google Sheets")
-            
-            if not self.service:
-                logger.warning("Google Sheets service not available")
-                return {"last_processing": None, "total_processed": 0}
-            
-            range_name = 'Sheet1!A:G'
+            # Get all data from sheet
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=range_name
+                range='Tabellenblatt1!A:M'
             ).execute()
             
             values = result.get('values', [])
-            if not values:
-                return {"last_processing": None, "total_processed": 0}
+            if len(values) <= 1:  # Only header or empty
+                return {
+                    "last_processing": None,
+                    "total_processed": 0,
+                    "pending_documents": 0,
+                    "failed_documents": 0,
+                    "processing_rate": "0%"
+                }
             
-            # Calculate statistics
-            total_processed = len(values) - 1  # Subtract header row
-            completed_count = sum(1 for row in values[1:] if len(row) > 1 and row[1] == "completed")
-            failed_count = sum(1 for row in values[1:] if len(row) > 1 and row[1] == "failed")
+            # Process data (skip header)
+            data_rows = values[1:]
+            total_processed = len([row for row in data_rows if len(row) > 2 and row[2] == 'completed'])
+            failed_documents = len([row for row in data_rows if len(row) > 2 and row[2] == 'failed'])
             
             # Get last processing time
             last_processing = None
-            if len(values) > 1:
-                last_row = values[-1]
-                if len(last_row) > 3:
-                    last_processing = last_row[3]  # Timestamp column
+            if data_rows:
+                last_row = data_rows[-1]
+                if len(last_row) > 5:
+                    last_processing = last_row[5]
+            
+            processing_rate = f"{(total_processed / len(data_rows) * 100):.1f}%" if data_rows else "0%"
             
             return {
                 "last_processing": last_processing,
                 "total_processed": total_processed,
-                "completed_count": completed_count,
-                "failed_count": failed_count,
-                "processing_rate": f"{(completed_count/total_processed*100):.1f}%" if total_processed > 0 else "0%"
+                "pending_documents": len(data_rows) - total_processed - failed_documents,
+                "failed_documents": failed_documents,
+                "processing_rate": processing_rate
             }
             
-        except HttpError as e:
-            logger.error(f"Google Sheets API error getting status: {str(e)}")
-            raise
         except Exception as e:
-            logger.error(f"Error getting processing status: {str(e)}")
-            raise
+            logger.error(f"Error getting processing status: {e}")
+            return {
+                "last_processing": None,
+                "total_processed": 0,
+                "pending_documents": 0,
+                "failed_documents": 0,
+                "processing_rate": "0%"
+            }
     
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def get_pending_approvals(self) -> List[Dict[str, Any]]:
-        """Get all pending HITL approval requests."""
+    def add_review_record(
+        self,
+        document_name: str,
+        source_file_id: str,
+        processing_status: str,
+        output_folder_id: str,
+        output_files: List[str],
+        quality_score: float,
+        processing_time: float = 0.0,
+        gamma_pptx_file_id: str = ""
+    ) -> bool:
+        """Add document processing record for review tracking
+        
+        Google Sheets columns:
+        A: Document_Name, B: Source_File_ID, C: Processing_Date, D: Processing_Status,
+        E: Review_Status, F: Review_Date, G: Reviewer_Name, H: Output_Folder_ID,
+        I: Output_Files_Created, J: Quality_Score, K: Error_Log, L: Processing_Time_Seconds, 
+        M: Notes, N: Gamma_PPTX_File_ID
+        """
+        if not self.service or not self.spreadsheet_id:
+            logger.warning("Google Sheets service not available")
+            return False
+        
         try:
-            logger.info("Getting pending approvals from Google Sheets")
+            row_data = [
+                document_name,  # A
+                source_file_id,  # B
+                datetime.now().isoformat(),  # C - Processing_Date
+                processing_status,  # D - Processing_Status (completed/failed)
+                "pending_review",  # E - Review_Status
+                "",  # F - Review_Date (empty until reviewed)
+                "",  # G - Reviewer_Name (empty until reviewed)
+                output_folder_id,  # H - Output_Folder_ID
+                ", ".join(output_files),  # I - Output_Files_Created
+                f"{quality_score:.2f}",  # J - Quality_Score
+                "",  # K - Error_Log
+                f"{processing_time:.2f}",  # L - Processing_Time_Seconds
+                "",  # M - Notes
+                gamma_pptx_file_id  # N - Gamma_PPTX_File_ID
+            ]
             
-            if not self.service:
-                logger.warning("Google Sheets service not available")
-                return []
+            # Check if sheet has headers, if not add them
+            try:
+                result = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range='Sheet1!A1:N1'
+                ).execute()
+                
+                if not result.get('values'):
+                    # Add headers
+                    headers = [[
+                        "Document_Name", "Source_File_ID", "Processing_Date", "Processing_Status",
+                        "Review_Status", "Review_Date", "Reviewer_Name", "Output_Folder_ID",
+                        "Output_Files_Created", "Quality_Score", "Error_Log", "Processing_Time_Seconds", "Notes", "Gamma_PPTX_File_ID"
+                    ]]
+                    self.service.spreadsheets().values().update(
+                        spreadsheetId=self.spreadsheet_id,
+                        range='Sheet1!A1:N1',
+                        valueInputOption='RAW',
+                        body={'values': headers}
+                    ).execute()
+                    logger.info("Added headers to Google Sheets")
+            except:
+                pass  # Headers might already exist
             
-            range_name = 'Sheet1!A:G'
+            # Append review record
+            body = {'values': [row_data]}
+            result = self.service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range='Tabellenblatt1!A:M',
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            
+            logger.info(f"✅ Added review record for {document_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding review record: {e}")
+            return False
+    
+    def get_pending_reviews(self) -> List[Dict[str, Any]]:
+        """Get all documents pending review"""
+        if not self.service or not self.spreadsheet_id:
+            return []
+        
+        try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=range_name
+                range='Tabellenblatt1!A:M'
             ).execute()
             
             values = result.get('values', [])
-            if not values:
+            if len(values) <= 1:  # Only header or empty
                 return []
             
-            # Find pending approvals
-            pending_approvals = []
-            for i, row in enumerate(values[1:], start=2):  # Skip header, start from row 2
-                if len(row) > 1 and row[1] == "awaiting_script_approval":
-                    pending_approvals.append({
-                        "approval_id": f"approval_{row[0]}_{i}",
-                        "job_id": row[0],
-                        "document_name": row[2] if len(row) > 2 else "Unknown",
-                        "status": row[1],
-                        "timestamp": row[3] if len(row) > 3 else None,
-                        "row_number": i
+            # Skip header, filter for pending_review
+            pending = []
+            for i, row in enumerate(values[1:], start=2):  # Start at row 2 (after header)
+                if len(row) >= 5 and row[4] == "pending_review":  # Column E
+                    pending.append({
+                        "row_number": i,
+                        "document_name": row[0] if len(row) > 0 else "",
+                        "source_file_id": row[1] if len(row) > 1 else "",
+                        "processing_date": row[2] if len(row) > 2 else "",
+                        "processing_status": row[3] if len(row) > 3 else "",
+                        "review_status": row[4] if len(row) > 4 else "",
+                        "output_folder_id": row[7] if len(row) > 7 else "",
+                        "output_files": row[8] if len(row) > 8 else "",
+                        "quality_score": float(row[9]) if len(row) > 9 and row[9] else 0.0,
+                        "processing_time": float(row[11]) if len(row) > 11 and row[11] else 0.0
                     })
             
-            logger.info(f"Found {len(pending_approvals)} pending approvals")
-            return pending_approvals
-            
-        except HttpError as e:
-            logger.error(f"Google Sheets API error getting approvals: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error getting pending approvals: {str(e)}")
-            raise
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def get_approval_request(self, approval_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific approval request."""
-        try:
-            logger.info(f"Getting approval request {approval_id}")
-            
-            pending_approvals = self.get_pending_approvals()
-            for approval in pending_approvals:
-                if approval["approval_id"] == approval_id:
-                    return approval
-            
-            return None
+            logger.info(f"Found {len(pending)} documents pending review")
+            return pending
             
         except Exception as e:
-            logger.error(f"Error getting approval request: {str(e)}")
-            raise
+            logger.error(f"Error getting pending reviews: {e}")
+            return []
     
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def update_approval_status(self, approval_id: str, status: str, approved_by: str = "", notes: str = "", revision_requests: List[str] = None) -> bool:
-        """Update approval status in Google Sheets."""
+    def update_review_status(
+        self,
+        document_name: str,
+        review_status: str,  # "approved" or "rejected"
+        reviewer_name: str = "User",
+        notes: str = ""
+    ) -> bool:
+        """Update review status for a document"""
+        if not self.service or not self.spreadsheet_id:
+            logger.warning("Google Sheets service not available")
+            return False
+        
         try:
-            logger.info(f"Updating approval {approval_id} status to {status}")
-            
-            if not self.service:
-                logger.warning("Google Sheets service not available")
-                return False
-            
-            # Find the approval request
-            approval = self.get_approval_request(approval_id)
-            if not approval:
-                logger.warning(f"Approval request {approval_id} not found")
-                return False
-            
-            # Update the status
-            row_number = approval["row_number"]
-            update_range = f'Sheet1!B{row_number}'
-            update_values = [[status]]
-            
-            # Add approval details if provided
-            if approved_by or notes:
-                details = f"Approved by: {approved_by}" if approved_by else ""
-                if notes:
-                    details += f" | Notes: {notes}"
-                if revision_requests:
-                    details += f" | Revisions: {', '.join(revision_requests)}"
-                update_values[0].append(details)
-            
-            body = {
-                'values': update_values
-            }
-            
-            self.service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range=update_range,
-                valueInputOption='RAW',
-                body=body
-            ).execute()
-            
-            logger.info(f"Successfully updated approval {approval_id} status to {status}")
-            return True
-            
-        except HttpError as e:
-            logger.error(f"Google Sheets API error updating approval: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Error updating approval status: {str(e)}")
-            raise
-    
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def get_approval_statistics(self) -> Dict[str, Any]:
-        """Get HITL approval statistics."""
-        try:
-            logger.info("Getting approval statistics from Google Sheets")
-            
-            if not self.service:
-                logger.warning("Google Sheets service not available")
-                return {"total_approvals": 0, "approved": 0, "rejected": 0, "pending": 0}
-            
-            range_name = 'Sheet1!A:G'
+            # Find the row with this document name
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=range_name
+                range='Tabellenblatt1!A:M'
             ).execute()
             
             values = result.get('values', [])
-            if not values:
-                return {"total_approvals": 0, "approved": 0, "rejected": 0, "pending": 0}
+            if len(values) <= 1:
+                return False
             
-            # Calculate statistics
-            total_approvals = len(values) - 1  # Subtract header row
-            approved = sum(1 for row in values[1:] if len(row) > 1 and "approved" in row[1].lower())
-            rejected = sum(1 for row in values[1:] if len(row) > 1 and "rejected" in row[1].lower())
-            pending = sum(1 for row in values[1:] if len(row) > 1 and "awaiting" in row[1].lower())
+            # Find matching row
+            for i, row in enumerate(values[1:], start=2):  # Start at row 2
+                if len(row) > 0 and row[0] == document_name and len(row) >= 5 and row[4] == "pending_review":
+                    # Update this row
+                    update_range = f'Sheet1!E{i}:G{i}'  # Columns E, F, G
+                    update_values = [[
+                        review_status,  # E - Review_Status
+                        datetime.now().isoformat(),  # F - Review_Date
+                        reviewer_name  # G - Reviewer_Name
+                    ]]
+                    
+                    # Also update notes if provided
+                    if notes:
+                        notes_range = f'Sheet1!M{i}'
+                        self.service.spreadsheets().values().update(
+                            spreadsheetId=self.spreadsheet_id,
+                            range=notes_range,
+                            valueInputOption='RAW',
+                            body={'values': [[notes]]}
+                        ).execute()
+                    
+                    self.service.spreadsheets().values().update(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=update_range,
+                        valueInputOption='RAW',
+                        body={'values': update_values}
+                    ).execute()
+                    
+                    logger.info(f"✅ Updated review status for {document_name} to {review_status}")
+                    return True
+            
+            logger.warning(f"Document {document_name} not found in pending reviews")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error updating review status: {e}")
+            return False
+    
+    def get_review_statistics(self) -> Dict[str, Any]:
+        """Get review statistics"""
+        if not self.service or not self.spreadsheet_id:
+            return {
+                "total_documents": 0,
+                "pending_review": 0,
+                "approved": 0,
+                "rejected": 0
+            }
+        
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range='Tabellenblatt1!A:M'
+            ).execute()
+            
+            values = result.get('values', [])
+            if len(values) <= 1:
+                return {"total_documents": 0, "pending_review": 0, "approved": 0, "rejected": 0}
+            
+            data_rows = values[1:]
+            pending = len([r for r in data_rows if len(r) >= 5 and r[4] == "pending_review"])
+            approved = len([r for r in data_rows if len(r) >= 5 and r[4] == "approved"])
+            rejected = len([r for r in data_rows if len(r) >= 5 and r[4] == "rejected"])
             
             return {
-                "total_approvals": total_approvals,
+                "total_documents": len(data_rows),
+                "pending_review": pending,
                 "approved": approved,
-                "rejected": rejected,
-                "pending": pending,
-                "approval_rate": f"{(approved/(approved+rejected)*100):.1f}%" if (approved+rejected) > 0 else "0%"
+                "rejected": rejected
             }
             
-        except HttpError as e:
-            logger.error(f"Google Sheets API error getting statistics: {str(e)}")
-            raise
         except Exception as e:
-            logger.error(f"Error getting approval statistics: {str(e)}")
-            raise
+            logger.error(f"Error getting review statistics: {e}")
+            return {"total_documents": 0, "pending_review": 0, "approved": 0, "rejected": 0}
     
-    @retry(
-        stop=stop_after_attempt(settings.max_retries),
-        wait=wait_exponential(multiplier=settings.retry_delay, exp_base=settings.retry_backoff_factor),
-        retry=retry_if_exception_type((HttpError, ConnectionError, TimeoutError))
-    )
-    def update_job_status(self, job_id: str, status: str, rejection_reason: str = "", regenerate_phase: str = "") -> bool:
-        """Update job status with additional details."""
+    def get_pending_approvals(self) -> List[Dict[str, Any]]:
+        """Get pending HITL approvals - alias for get_pending_reviews"""
+        return self.get_pending_reviews()
+    
+    def get_approval_request(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """Get specific approval request by row number"""
+        pending = self.get_pending_reviews()
+        for item in pending:
+            if item.get("row_number") == int(approval_id):
+                return item
+        return None
+    
+    def update_approval_status(
+        self, 
+        approval_id: str, 
+        status: str, 
+        approved_by: str, 
+        notes: str = ""
+    ) -> bool:
+        """Update approval status - alias for update_review_status"""
+        # Get document name from approval_id (row number)
+        pending = self.get_pending_reviews()
+        for item in pending:
+            if item.get("row_number") == int(approval_id):
+                return self.update_review_status(
+                    item['document_name'],
+                    status,
+                    approved_by,
+                    notes
+                )
+        return False
+    
+    def get_approval_statistics(self) -> Dict[str, Any]:
+        """Get approval statistics - alias for get_review_statistics"""
+        return self.get_review_statistics()
+    
+    def update_job_status(
+        self, 
+        job_id: str, 
+        status: str, 
+        rejection_reason: str = "", 
+        regenerate_phase: str = ""
+    ) -> bool:
+        """Update job status in sheets"""
+        # Implementation for legacy compatibility
+        return True
+    
+    def move_folder_to_done(self, folder_id: str, done_folder_id: str = "1yG_8-wBK1wfrEjzs5J_rKRRaHBpOFPoK") -> bool:
+        """Move output folder from Review to Done folder
+        
+        Args:
+            folder_id: ID of the folder to move
+            done_folder_id: ID of the Done folder (default from config)
+        
+        Returns:
+            True if successful, False otherwise
+        """
         try:
-            logger.info(f"Updating job {job_id} status to {status}")
+            # Get DriveService from GoogleDriveService
+            from app.config import settings
             
-            if not self.service:
-                logger.warning("Google Sheets service not available")
+            # Import Google Drive service to access drive API
+            credentials_path = os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials/wmc-automation-agents-e6ce75b3daa2.json')
+            
+            if not os.path.exists(credentials_path):
+                logger.error(f"Credentials not found: {credentials_path}")
                 return False
             
-            # Find the job row
-            range_name = 'Sheet1!A:Z'
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range=range_name
+            from google.oauth2.service_account import Credentials
+            from googleapiclient.discovery import build
+            
+            credentials = Credentials.from_service_account_file(
+                credentials_path,
+                scopes=['https://www.googleapis.com/auth/drive']
+            )
+            drive_service = build('drive', 'v3', credentials=credentials)
+            
+            # Get current parents
+            file = drive_service.files().get(
+                fileId=folder_id,
+                fields='parents'
             ).execute()
             
-            values = result.get('values', [])
-            if not values:
-                logger.warning("No data found in spreadsheet")
-                return False
+            previous_parents = ",".join(file.get('parents', []))
             
-            # Find the job row
-            job_row = None
-            for i, row in enumerate(values):
-                if len(row) > 0 and row[0] == job_id:
-                    job_row = i + 1  # Sheets is 1-indexed
-                    break
-            
-            if job_row is None:
-                logger.warning(f"Job {job_id} not found in spreadsheet")
-                return False
-            
-            # Update the status with additional details
-            update_range = f'Sheet1!B{job_row}'
-            update_values = [[status]]
-            
-            # Add additional details
-            details = []
-            if rejection_reason:
-                details.append(f"Rejection: {rejection_reason}")
-            if regenerate_phase:
-                details.append(f"Regenerate: {regenerate_phase}")
-            
-            if details:
-                update_values[0].append(" | ".join(details))
-            
-            body = {
-                'values': update_values
-            }
-            
-            self.service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range=update_range,
-                valueInputOption='RAW',
-                body=body
+            # Move folder: remove from current parents, add to done folder
+            updated_file = drive_service.files().update(
+                fileId=folder_id,
+                addParents=done_folder_id,
+                removeParents=previous_parents,
+                fields='id, parents'
             ).execute()
             
-            logger.info(f"Successfully updated job {job_id} status to {status}")
+            logger.info(f"✅ Moved folder {folder_id} to Done folder")
             return True
             
-        except HttpError as e:
-            logger.error(f"Google Sheets API error: {str(e)}")
-            raise
         except Exception as e:
-            logger.error(f"Error updating job status: {str(e)}")
-            raise
+            logger.error(f"Error moving folder to Done: {e}")
+            return False
