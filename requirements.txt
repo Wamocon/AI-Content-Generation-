@@ -15,6 +15,15 @@ google-cloud-logging==3.12.1
 google-cloud-monitoring==2.27.2
 google-cloud-error-reporting==1.12.0
 
+# Google AI and Drive APIs
+google-generativeai>=0.8.3
+google-api-python-client>=2.108.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+
+# Document Generation
+python-docx>=1.1.2
+
 # RAG and Vector Database Dependencies
 chromadb>=0.4.22,<0.5.0
 # CrewAI 0.28.8 requires langchain >=0.1.10,<0.2.0

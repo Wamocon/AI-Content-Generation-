@@ -11,9 +11,18 @@ from typing import Dict, Any, List, Optional, TypedDict, Annotated
 from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
-    from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import ToolNode
+# ToolNode moved in newer versions - use conditional import
+try:
+    from langgraph.prebuilt import ToolNode
+except ImportError:
+    # For langgraph >= 0.2.0, ToolNode may not be in prebuilt
+    try:
+        from langgraph.prebuilt.tool_node import ToolNode
+    except ImportError:
+        logger.warning("ToolNode not available in langgraph, using fallback")
+        ToolNode = None
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -563,9 +572,9 @@ class LangGraphWorkflowOrchestrator:
             state["next_action"] = "quality_check"
             
             logger.info(f"Audio preparation completed for job {state['job_id']}")
-                        return state
+            return state
                         
-            except Exception as e:
+        except Exception as e:
             logger.error(f"Error in audio preparation: {str(e)}")
             state["last_error"] = str(e)
             state["phase_status"] = "failed"

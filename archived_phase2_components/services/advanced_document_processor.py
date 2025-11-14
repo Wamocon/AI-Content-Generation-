@@ -129,6 +129,78 @@ class AdvancedDocumentProcessor:
         
         logger.info("Advanced Document Processor initialized")
     
+    def analyze_content_depth(self, document_content: str) -> Dict[str, Any]:
+        """
+        Analyze content depth to determine generation requirements.
+        This method provides the missing analyze_content_depth functionality.
+        """
+        try:
+            if not document_content or len(document_content.strip()) < 100:
+                return {
+                    "word_count": 0,
+                    "estimated_slides": 10,
+                    "estimated_use_case_pages": 3,
+                    "estimated_quiz_questions": 15,
+                    "content_density": "low"
+                }
+            
+            # Calculate word count
+            word_count = len(document_content.split())
+            
+            # Estimate content requirements based on word count
+            # More content = more detailed generation needed
+            if word_count > 5000:
+                content_density = "high"
+                estimated_slides = 40
+                estimated_use_case_pages = 10
+                estimated_quiz_questions = 50
+            elif word_count > 2000:
+                content_density = "medium"
+                estimated_slides = 25
+                estimated_use_case_pages = 7
+                estimated_quiz_questions = 35
+            else:
+                content_density = "low"
+                estimated_slides = 15
+                estimated_use_case_pages = 5
+                estimated_quiz_questions = 20
+            
+            # Analyze unique topics using keyword extraction if spaCy is available
+            unique_topics = []
+            if hasattr(self, 'nlp') and self.nlp:
+                try:
+                    doc = self.nlp(document_content[:5000])  # Limit for performance
+                    # Extract noun phrases as topics
+                    unique_topics = [chunk.text for chunk in doc.noun_chunks][:10]
+                except Exception as e:
+                    logger.warning(f"Could not extract topics with spaCy: {e}")
+                    # Fallback: simple keyword extraction
+                    words = document_content.lower().split()
+                    unique_words = list(set([w for w in words if len(w) > 6]))[:10]
+                    unique_topics = unique_words
+            
+            return {
+                "word_count": word_count,
+                "estimated_slides": estimated_slides,
+                "estimated_use_case_pages": estimated_use_case_pages,
+                "estimated_quiz_questions": estimated_quiz_questions,
+                "content_density": content_density,
+                "unique_topics": unique_topics,
+                "subtopics": len(unique_topics) if unique_topics else 0,  # Add subtopics field
+                "quality_multiplier": 1.5 if content_density == "high" else 1.2 if content_density == "medium" else 1.0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in analyze_content_depth: {e}")
+            # Return safe defaults
+            return {
+                "word_count": 0,
+                "estimated_slides": 15,
+                "estimated_use_case_pages": 5,
+                "estimated_quiz_questions": 20,
+                "content_density": "medium"
+            }
+    
     def _initialize_nlp_models(self):
         """Initialize NLP models for text processing."""
         try:
@@ -174,8 +246,19 @@ class AdvancedDocumentProcessor:
     def _initialize_analyzers(self):
         """Initialize content analyzers."""
         try:
-            # Initialize file type detector
-            self.file_detector = magic.Magic(mime=True)
+            # Initialize file type detector (optional - fallback to extension-based detection)
+            try:
+                import magic as magic_lib
+                if hasattr(magic_lib, 'Magic'):
+                    self.file_detector = magic_lib.Magic(mime=True)
+                else:
+                    # python-magic-bin on Windows
+                    import magic
+                    self.file_detector = magic.from_file
+                logger.info("✅ python-magic initialized successfully")
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"python-magic not available, using extension-based detection: {str(e)}")
+                self.file_detector = None
             
             # Initialize image processors
             self.image_formats = {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}
@@ -184,7 +267,8 @@ class AdvancedDocumentProcessor:
             
         except Exception as e:
             logger.error(f"Failed to initialize analyzers: {str(e)}")
-            raise
+            # Don't raise - allow graceful fallback
+            self.file_detector = None
     
     async def process_document(
         self, 
@@ -289,8 +373,17 @@ class AdvancedDocumentProcessor:
             else:
                 doc_type = DocumentType.UNKNOWN
             
-            # Get MIME type
-            mime_type = self.file_detector.from_file(file_path)
+            # Get MIME type (with fallback)
+            mime_type = None
+            if self.file_detector:
+                try:
+                    if callable(self.file_detector):
+                        mime_type = self.file_detector(file_path, mime=True)
+                    else:
+                        mime_type = self.file_detector.from_file(file_path)
+                except Exception as e:
+                    logger.warning(f"Failed to detect MIME type: {str(e)}")
+                    mime_type = None
             
             # Extract additional metadata based on file type
             page_count = None

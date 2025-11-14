@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     google_drive_done_folder_id: str = Field(default="1yG_8-wBK1wfrEjzs5J_rKRRaHBpOFPoK", description="Google Drive folder ID for completed content")
     google_sheets_id: str = Field(default="1d87xmQNbWlNwtvRfhaWLSk2FkfTRVadKm94-ppaASbw", description="Google Sheets ID for job tracking")
     
-    # AI Model Configuration - Gemini 2.0 Flash Experimental (Latest for Best Results)
-    gemini_model_name: str = Field(default="gemini-2.0-flash-exp", description="Gemini 2.0 Flash Experimental - Latest stable experimental model for detailed content generation")
-    gemini_model_fallback: str = Field(default="gemini-1.5-pro-002", description="Fallback Gemini model for production stability")
+    # AI Model Configuration - Gemini 2.5 Pro (Latest Production Model)
+    gemini_model_name: str = Field(default="gemini-2.5-pro", description="Gemini 2.5 Pro - Latest production model with enhanced capabilities")
+    gemini_model_fallback: str = Field(default="gemini-2.5-flash", description="Gemini 2.5 Flash - Fast fallback model for high-volume processing")
     gemini_model_temperature: float = Field(default=0.7, description="Gemini model temperature for content generation")
     gemini_model_top_p: float = Field(default=0.9, description="Gemini model top_p for content generation")
     gemini_api_key: str = Field(default="your-gemini-api-key", description="Gemini API key")

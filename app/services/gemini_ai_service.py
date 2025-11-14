@@ -4,9 +4,37 @@ Gemini AI Service for FIAE AI Content Factory - Robust Error Handling
 
 import os
 import time
+import asyncio
 from typing import Dict, Any, Optional
+from collections import deque
 from loguru import logger
 from app.config import settings
+
+# Global rate limiter
+class RateLimiter:
+    def __init__(self, max_calls: int = 14, period: int = 60):
+        self.max_calls = max_calls
+        self.period = period
+        self.calls = deque()
+    
+    def wait_if_needed(self):
+        """Wait if rate limit would be exceeded"""
+        now = time.time()
+        # Remove calls older than period
+        while self.calls and self.calls[0] < now - self.period:
+            self.calls.popleft()
+        
+        # If we're at the limit, wait
+        if len(self.calls) >= self.max_calls:
+            sleep_time = self.period - (now - self.calls[0])
+            if sleep_time > 0:
+                logger.info(f"[RATE LIMIT] Waiting {sleep_time:.1f}s to avoid rate limit...")
+                time.sleep(sleep_time)
+        
+        self.calls.append(time.time())
+
+# Global rate limiter instance
+rate_limiter = RateLimiter(max_calls=14, period=60)  # 14 calls per 60 seconds (safer than 15)
 
 try:
     import google.generativeai as genai
@@ -54,15 +82,25 @@ class GeminiAIService:
         except Exception as e:
             logger.error(f"Gemini initialization failed: {e}")
     
-    def generate_content_with_retry(self, content_type: str, document_content: str, context_query: str, timeout: int = 60, max_retries: int = 3) -> str:
+    def generate_content_with_retry(self, content_type: str, document_content: str, context_query: str, timeout: int = 60, max_retries: int = 4) -> str:
         """
         Generate content with robust retry logic and timeout handling
+        PRODUCTION FIX: Reduced prompt size, increased retries, better error handling
         """
         if not self.initialized or not self.model:
             return f"Error: Gemini service not initialized"
         
+        # CRITICAL FIX: Limit document content size to prevent timeouts
+        MAX_CONTENT_LENGTH = 30000  # 30k characters max
+        if len(context_query) > MAX_CONTENT_LENGTH:
+            logger.warning(f"[GEMINI] Prompt too large ({len(context_query)} chars), truncating to {MAX_CONTENT_LENGTH}")
+            context_query = context_query[:MAX_CONTENT_LENGTH] + "\n\n[... Dokument gekürzt für bessere Verarbeitung ...]"
+        
         for attempt in range(max_retries):
             try:
+                # Apply rate limiting
+                rate_limiter.wait_if_needed()
+                
                 logger.info(f"[GEMINI] Generating {content_type} (attempt {attempt + 1}/{max_retries})")
                 
                 # Create generation config with timeout
@@ -81,14 +119,26 @@ class GeminiAIService:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
                 ]
                 
-                # Generate content with timeout
+                # Generate content with explicit timeout
                 start_time = time.time()
                 
-                response = self.model.generate_content(
-                    context_query,
-                    generation_config=generation_config,
-                    safety_settings=safety_settings
-                )
+                # Use timeout parameter passed to function
+                import asyncio
+                import concurrent.futures
+                
+                # Run synchronous generate_content with timeout
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        self.model.generate_content,
+                        context_query,
+                        generation_config=generation_config,
+                        safety_settings=safety_settings
+                    )
+                    try:
+                        response = future.result(timeout=timeout)
+                    except concurrent.futures.TimeoutError:
+                        future.cancel()
+                        raise Exception(f"504 The request timed out after {timeout}s. Please try again.")
                 
                 generation_time = time.time() - start_time
                 
@@ -119,14 +169,18 @@ class GeminiAIService:
                 error_msg = str(e)
                 logger.error(f"[GEMINI] Error generating {content_type} (attempt {attempt + 1}): {error_msg}")
                 
-                # Handle specific error types
+                # Handle specific error types with better rate limiting
                 if "503" in error_msg or "overloaded" in error_msg.lower():
-                    wait_time = min(30, 10 * (attempt + 1))  # Exponential backoff
+                    wait_time = min(60, 20 * (attempt + 1))  # Longer exponential backoff
                     logger.warning(f"[GEMINI] Model overloaded, waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
-                elif "504" in error_msg or "timeout" in error_msg.lower():
-                    wait_time = min(20, 5 * (attempt + 1))
+                elif "504" in error_msg or "timeout" in error_msg.lower() or "deadline" in error_msg.lower():
+                    wait_time = min(40, 15 * (attempt + 1))
                     logger.warning(f"[GEMINI] Timeout error, waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                elif "429" in error_msg or "rate limit" in error_msg.lower():
+                    wait_time = 30  # Fixed wait for rate limits
+                    logger.warning(f"[GEMINI] Rate limit exceeded, waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
                 elif attempt < max_retries - 1:
                     time.sleep(10)
