@@ -1,32 +1,36 @@
 #!/usr/bin/env python3
 """
-PHASE 1: SINGLE COMPREHENSIVE USE CASE GENERATION
-=================================================
-🎯 Focus: Generate ONE comprehensive, professional use case per source document
-📚 Coverage: Covers ALL major topics identified in the source document
-✅ Quality: Extremely detailed, beginner-friendly, with complete step-by-step solutions
-📄 Output: ONE professional Word document per source document
+PHASE 1: DiTeLe STANDARD SCENARIO GENERATION
+=============================================
+🎯 Focus: Generate educational scenarios following DiTeLe standard structure
+📚 Coverage: Multiple problem-solution pairs covering all major topics
+✅ Quality: Detailed, beginner-friendly, trainer-ready
+📄 Output: Professional Word documents with standardized structure
 
-NEW BUSINESS REQUIREMENTS (Updated):
-- ✨ ONE comprehensive use case per document (not multiple)
-- ✨ Covers all major topics from source document in a single cohesive scenario
-- ✨ Extremely detailed solutions: Step-by-step for EVERY task
-- ✨ Beginner-friendly: Tasks are easy to implement for learners
-- ✨ Professional output: NO quality scores, NO bot mentions, proper formatting
-- ✨ Trainer-ready: Solutions detailed enough for trainers to compare student work
+DiTeLe STRUCTURE:
+1. Themenliste (Topic List)
+2. Lernziele (Learning Objectives - upfront)
+3. Theoretische Grundlagen (Theoretical Foundation - 800+ words)
+4. Ausgangslage (Starting Situation - realistic context)
+5. Problem-Lösungs-Paare (Multiple Problem-Solution Pairs - one per topic)
+6. Lernziel-Checkliste (Learning Objectives Checklist - verification)
+
+TEST MODE:
+- Set TEST_MODE = True to process only 2 documents for quality review
+- Set TEST_MODE = False for full batch processing
+- Always test first before running full automation!
 
 Workflow:
 1. Analyze source document (identify topics, complexity, scope)
-2. Determine major topics to cover (focus on most important concepts)
-3. Generate ONE comprehensive use case with:
-   - Theoretical background covering major topics
-   - Real-world scenario integrating all concepts
-   - 5-7 beginner-friendly tasks
-   - Extremely detailed step-by-step solutions for EACH task
-   - Learning outcomes
-4. Quality validation (completeness, detail level, formatting)
-5. Create professional Word document (no quality scores visible)
+2. Generate DiTeLe-compliant scenario with multiple problem-solution pairs
+3. Validate structure completeness
+4. Create professional Word document with proper formatting
+5. Upload to Google Drive for review
 """
+
+# ========== CONFIGURATION ==========
+TEST_MODE = True  # Set to False after testing first 2 documents
+MAX_TEST_DOCUMENTS = 2  # Number of documents to process in test mode
 
 import asyncio
 import os
@@ -95,40 +99,40 @@ async def analyze_document_for_use_cases(document_content: str, doc_name: str) -
     return analysis_result
 
 
-async def generate_single_comprehensive_use_case(
+async def generate_ditele_scenario(
     document_content: str,
     doc_name: str,
     analysis: AnalysisResult
 ) -> str:
     """
-    🤖 Generate ONE comprehensive, professional use case covering all major topics
+    🤖 Generate DiTeLe-compliant educational scenario
     
-    NEW APPROACH:
-    - Single API call (no batching needed)
-    - Covers ALL major topics from source document
-    - Extremely detailed step-by-step solutions
-    - Beginner-friendly and easy to implement
-    - Professional formatting with proper spacing
-    - NO quality scores or bot mentions
-    - Minimum 3500+ characters for comprehensive coverage
+    DiTeLe STRUCTURE:
+    1. Themenliste (Topic List)
+    2. Lernziele (Learning Objectives upfront)
+    3. Theoretische Grundlagen (Expanded theory - 800+ words)
+    4. Ausgangslage (Realistic starting situation)
+    5. Multiple Problem-Solution Pairs (One per major topic)
+    6. Lernziel-Checkliste (Learning objectives as checklist)
     
     Returns:
-        Comprehensive use case content as string
+        DiTeLe-formatted scenario content as string
     """
     requirements = analysis.content_requirements
     topics_list = [t.title for t in analysis.topics[:10]]  # Top 10 topics
     
-    logger.info(f"🤖 Generiere EINEN umfassenden Anwendungsfall...")
+    logger.info(f"🤖 Generiere DiTeLe-Szenario...")
     logger.info(f"📋 Abzudeckende Themen: {', '.join(topics_list[:5])}...")
     logger.info(f"📊 Insgesamt {len(analysis.topics)} Themen identifiziert")
+    logger.info(f"🎯 Erwartete Problem-Lösungs-Paare: {min(len(topics_list), 7)}")
     
     # Create comprehensive topic list for prompt
     topics_str = '\n'.join([f"- {t}" for t in topics_list])
     
-    # OPTIMIZED PROMPT for single comprehensive use case
+    # DiTeLe-COMPLIANT PROMPT
     prompt = f"""Du bist ein erfahrener IT-Ausbilder und Praxisexperte für Fachinformatiker Anwendungsentwicklung.
 
-🎯 AUFGABE: Erstelle EINEN umfassenden, professionellen IT-Anwendungsfall
+🎯 AUFGABE: Erstelle ein PRAXISNAHES Lernszenario nach dem DiTeLe-Standard
 
 📚 QUELLDOKUMENT: {doc_name}
 
@@ -447,8 +451,7 @@ def create_professional_word_document(
     filename: str,
     analysis: AnalysisResult,
     validation: Dict[str, Any]
-) -> bytes:
-    """
+12221222    """
     📄 Erstelle ein professionelles Word-Dokument mit dem Anwendungsfall
     
     UPDATED for single comprehensive use case:
