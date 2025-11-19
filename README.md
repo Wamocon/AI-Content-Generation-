@@ -152,405 +152,185 @@ DiTeLe is a **standardized educational structure** for IT apprentice training sc
 
 - 🔍 **Recursive subfolder search** (finds documents anywhere in source folder)   cd "d:\FIAE Agents with RAG"
 
-- 📄 **Professional file naming** (`DiTeLe_Szenario_{original}_{timestamp}.docx`)
+# FIAE AI Content Factory — DiTeLe Standard
 
-   ```---
+AI-powered system that generates German, DiTeLe-compliant training scenarios (Anwendungsfälle) from source `.docx` files in Google Drive. Output is a professionally formatted Word document uploaded back to Drive.
+
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![Status](https://img.shields.io/badge/status-production-green.svg)]() [![DiTeLe](https://img.shields.io/badge/standard-DiTeLe-blue.svg)]()
 
 ---
 
+## Overview
 
+End-to-end flow:
 
-## 🚀 Installation
+1) Google Drive source folder → 2) Document analysis (topics, complexity) → 3) Adaptive batching and prompt generation → 4) Gemini content generation → 5) `.docx` assembly (python-docx) → 6) Upload to Google Drive Review folder → 7) (Optional) log to Google Sheets.
 
-2. **Activate environment**## 🏗️ Architecture
+Active entrypoint: `automation_ditele.py` (Phase 1). Phase 2 (API/Dashboard, RAG, multi-agent orchestration) is archived under `archived/phase2_components/` and not active on `main`.
 
-### **Prerequisites**
+---
 
-
-
-- Python 3.11 or higher
-
-- Google Cloud credentials (for Google Drive integration)   ```powershell```
-
-- Gemini API key (for AI content generation)
-
-- Virtual environment (recommended)   .\.venv\Scripts\Activate.ps1┌─────────────────┐
-
-
-
-### **Step 1: Clone Repository**   ```│  Google Drive   │  Source Documents (DOCX)
-
-
-
-```powershell│  Source Folder  │
-
-git clone https://github.com/Maanik23/AI-Content-Generation-.git
-
-cd "FIAE Agents with RAG"3. **Configure .env**└────────┬────────┘
+## Repository Structure
 
 ```
+AI-Content-Generation/
+├─ automation_ditele.py                      # Main Phase 1 orchestrator (active)
+├─ personal_google_drive_service.py          # Runs OAuth flow and stores personal token
+├─ requirements.txt                          # Python dependencies
+├─ pyproject.toml                            # Tooling/format config (if used)
+├─ app/
+│  ├─ config.py                              # Pydantic Settings; reads .env (use settings.*)
+│  ├─ models.py                              # Pydantic models (future API use)
+│  └─ services/
+│     ├─ gemini_ai_service.py                # Low-level Gemini client (rate-limit, retries)
+│     ├─ intelligent_gemini_service.py       # High-level wrapper (generate_from_prompt, chunking)
+│     ├─ document_analyzer.py                # Topic extraction, complexity, requirements
+│     └─ google_services.py                  # Google Drive & Sheets integration (personal OAuth)
+└─ archived/
+   ├─ README.md                              # What’s archived and why
+   ├─ automation_*.py                        # Old Phase 1/2 scripts (reference only)
+   └─ phase2_components/                     # FastAPI, Docker, RAG, orchestrators (inactive)
+```
 
-         │
+---
 
-### **Step 2: Create Virtual Environment**
+## Setup (Windows PowerShell)
 
-   ```bash         ↓
+Prerequisites: Python 3.11+, Google API OAuth client credentials, Gemini API key.
 
 ```powershell
-
-python -m venv .venv   GEMINI_API_KEY=your_key┌────────────────────────────────────────────────────────────┐
-
-.\.venv\Scripts\Activate.ps1
-
-```   GOOGLE_DRIVE_CONTENT_SOURCE_FOLDER_ID=your_folder_id│              FIAE AI CONTENT FACTORY                       │
-
-
-
-### **Step 3: Install Dependencies**   GOOGLE_DRIVE_REVIEW_FOLDER_ID=your_folder_id│                                                            │
-
-
-
-```powershell   ```│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐│
-
+python -m venv .venv
+ .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-```│  │   Frontend   │  │   Backend    │  │  AI Services    ││
+# Create .env in the repo root (minimum):
+# GEMINI_API_KEY=...
+# GOOGLE_DRIVE_CONTENT_SOURCE_FOLDER_ID=...
+# GOOGLE_DRIVE_REVIEW_FOLDER_ID=...
+# PERSONAL_GOOGLE_ACCOUNT_ENABLED=True
+# LOG_LEVEL=INFO
 
-
-
-### **Step 4: Configure Environment**4. **Run automation**│  │   Next.js 14 │◄─┤   FastAPI    │◄─┤  Multi-Agent    ││
-
-
-
-Create `.env` file in root directory:│  │              │  │              │  │  Orchestration  ││
-
-
-
-```bash   ```powershell│  │ • Dashboard  │  │ • REST API   │  │                 ││
-
-# Required: Google Gemini API
-
-GEMINI_API_KEY=your_gemini_api_key_here   python automation_phase1_content.py│  │ • Real-time  │  │ • WebSocket  │  │ • Gemini 1.5    ││
-
-
-
-# Required: Google Drive Folders   ```│  │ • Monitoring │  │ • Automation │  │ • CrewAI (6)    ││
-
-GOOGLE_DRIVE_CONTENT_SOURCE_FOLDER_ID=your_source_folder_id
-
-GOOGLE_DRIVE_REVIEW_FOLDER_ID=your_review_folder_id│  │              │  │              │  │ • LangGraph     ││
-
-
-
-# Required: Google Cloud Credentials### Expected Output│  │              │  │              │  │ • ChromaDB RAG  ││
-
-GOOGLE_APPLICATION_CREDENTIALS=credentials/wmc-automation-agents-e6ce75b3daa2.json
-
-│  └──────────────┘  └──────────────┘  └─────────────────┘│
-
-# Optional: Logging
-
-LOG_LEVEL=INFO```│                                                            │
-
-```
-
-🚀 PHASE 1: ANWENDUNGSFÄLLE-GENERIERUNG│  Processing Pipeline (5 Phases):                         │
-
-### **Step 5: Setup Google Authentication**
-
-📚 5 Dokumente gefunden│  1. Content Extraction (text, images, tables)            │
-
-```powershell
-
-# Run OAuth2 setup for personal Google account[1/5] VERARBEITE: document1.docx│  2. Depth Analysis (calculate n-number requirements)     │
-
+# Run OAuth (stores personal_google_token.pickle after browser flow)
 python personal_google_drive_service.py
-
-   🧠 Analysiere Dokument... (10 Anwendungsfälle empfohlen)│  3. RAG Enhancement (vector storage & retrieval)         │
-
-# Follow browser prompts to authenticate
-
-# Creates: personal_google_token.pickle   🤖 Generiere Anwendungsfälle...│  4. Content Generation (6 specialized AI agents)         │
-
 ```
 
-   🔍 Qualität: 92/100 (EXCELLENT)│  5. Quality Assurance (validation & completeness)        │
+Important:
+- Use personal OAuth only (service account is not used in Phase 1).
+- Do not hardcode keys/IDs in code; always read via `app/config.py` `settings`.
 
 ---
 
-   ✅ ERFOLG!│                                                            │
+## How It Works
 
-## 📖 Usage Guide
+`automation_ditele.py` orchestrates the full batch:
 
-🎉 VERARBEITUNG ABGESCHLOSSEN└────────────────────────────────────────────────────────────┘
+- Reads Drive source folder (ID in `.env`).
+- Loads each `.docx`, extracts plain text, and analyzes it with `DocumentAnalyzer` to get topics and complexity.
+- Plans adaptive batches via `_calculate_optimal_batch_sizes` based on complexity.
+- Builds DiTeLe-compliant prompts and generates content with `IntelligentGeminiService` (internally uses `GeminiAIService` with 14/min rate limiting and retries/backoff).
+- Cleans and renumbers content (`_cleanup_batch_content`) to enforce forbidden-term removal and consistent numbering of “PROBLEM n / LÖSUNG n”.
+- Assembles a Word document using `python-docx` and uploads to the Review folder.
 
-### **Test Mode (REQUIRED FIRST)**
+DiTeLe sections produced:
+1. Themenliste
+2. Lernziele (vorne)
+3. Theoretische Grundlagen (≥700–800 Wörter)
+4. Ausgangslage
+5. Problem‑Lösungs‑Paare (je Thema ein Paar)
+6. Lernziel‑Checkliste
 
-```         │
+Output naming: `DiTeLe_Szenario_{original_doc_name}_{YYYYMMDD_HHMMSS}.docx`.
 
-Before processing all documents, **ALWAYS test with 2 documents first**:
+---
 
-         ↓
+## Run
+
+Test Mode (required first run):
 
 ```powershell
-
-# TEST_MODE is enabled by default---┌────────────────────────────────────────────────────────────┐
-
 python automation_ditele.py
-
-```│                    Generated Content                       │
-
-
-
-**What happens:**## 📦 System Architecture│  (Saved to Google Drive Review Folder)                    │
-
-- ✅ Scans Google Drive source folder
-
-- ✅ Processes **only first 2 documents**│                                                            │
-
-- ✅ Generates DiTeLe-compliant Word documents
-
-- ✅ Uploads to Google Drive review folder### Agentic AI System│  ✓ PowerPoint (n slides)                                 │
-
-- ✅ Shows progress and quality metrics
-
-│  ✓ Google Slides (interactive)                           │
-
-**Expected output:**
-
-The system uses **3 autonomous AI agents**:│  ✓ IT Use Cases (n pages with solutions)                 │
-
 ```
 
-🚀 DiTeLe STANDARD SCENARIO GENERATION│  ✓ Quiz (n questions with answers)                       │
+What happens:
+- Processes only the first 2 documents from the source folder (`TEST_MODE=True`).
+- Builds and uploads 2 DiTeLe-compliant `.docx` files to the Review folder.
 
-📋 MODE: TEST MODE (Max 2 documents)
+Full Batch:
 
-📚 10 Dokumente gefunden**🧠 Agent 1: Document Analyzer**│  ✓ Trainer Script (n pages)                              │
-
-
-
-[1/2] VERARBEITE: FR-659.docx- Identifies topics and complexity│  ✓ Knowledge Analysis (backend)                          │
-
-   🧠 Analysiere Dokument...
-
-   📊 Empfohlen: 8 Themenbereiche für Problem-Lösungs-Paare- Determines optimal use case count└────────────────────────────────────────────────────────────┘
-
-   🤖 Generiere DiTeLe-Szenario...
-
-   ✅ DiTeLe-Struktur validiert: Alle 6 Abschnitte vorhanden- Uses: Gemini AI```
-
-   💾 Word-Dokument erstellt
-
-   ☁️ Hochgeladen: DiTeLe_Szenario_FR-659_20251118_143022.docx
-
-   ✅ ERFOLG!
-
-**🤖 Agent 2: Use Case Generator**---
-
-[2/2] VERARBEITE: FR-660.docx
-
-   ...- Generates detailed use cases in batches
-
-
-
-🎉 TEST ABGESCHLOSSEN!- 100% topic coverage## 🚀 Features
-
-✅ 2 von 2 Dokumenten erfolgreich verarbeitet
-
-⏱️ Gesamtzeit: 12 Minuten- Content in German (5 sections per use case)
-
-
-
-📋 NÄCHSTE SCHRITTE:### **Content Generation**
-
-1. Überprüfe die 2 generierten Dokumente in Google Drive
-
-2. Zeige sie Nikolaj/Erwin/Waleri zur Genehmigung**✅ Agent 3: Quality Validator**- **Dynamic Sizing**: Automatic calculation of slides/pages/questions based on source content
-
-3. Wenn genehmigt: Setze TEST_MODE = False in automation_ditele.py (Zeile 31)
-
-4. Führe vollständige Automation aus- 6-point quality check- **100% Coverage**: Every topic from source document included
-
+```powershell
+# Open automation_ditele.py and set TEST_MODE=False, then:
+python automation_ditele.py
 ```
 
-- Scores 0-100 with grades- **Multi-Format**: PowerPoint, Google Slides, DOCX, text files
-
-### **Quality Review Checklist**
-
-- Ensures professional standards- **Professional Quality**: German language, educational standard
-
-After test run, check the 2 generated documents:
-
-- **Image Placeholders**: Detailed descriptions for every visual element
-
-- [ ] **Themenliste** - All topics clearly listed?
-
-- [ ] **Lernziele** - Measurable and specific objectives?### Output Format
-
-- [ ] **Theoretische Grundlagen** - 800+ words, well-explained?
-
-- [ ] **Ausgangslage** - Realistic scenario (apprentice, company, project)?### **AI Orchestration**
-
-- [ ] **Problem-Lösungs-Paare** - One pair per topic, detailed steps?
-
-- [ ] **Lernziel-Checkliste** - Learning objectives as verification questions?Each generated Word document contains:- **LangGraph**: 5-phase workflow with state management
-
-- [ ] **Formatting** - Arial Narrow font, proper headings, spacing?
-
-- [ ] **Language** - Correct German, beginner-friendly?- **Title page** with metadata- **CrewAI**: 6 specialized agents:
-
-- [ ] **Content** - No "bot", "AI", or "quality score" mentions?
-
-- **Information table** (source, count, quality, date)  - Content Analyst (knowledge extraction)
-
-### **Full Production Run**
-
-- **Use cases** with 5 sections each:  - Presentation Creator (slides generation)
-
-Once quality is approved by stakeholders:
-
-  - Theoretischer Hintergrund (Theory)  - Use Case Developer (IT scenarios)
-
-1. **Edit** `automation_ditele.py`
-
-2. **Change line 31**:  - Praxis-Szenario (Scenario)  - Quiz Master (assessment creation)
-
-   ```python
-
-   TEST_MODE = False  # Changed from True  - Aufgaben für Lernende (Tasks)  - Trainer Writer (scripts)
-
-   ```
-
-3. **Run full automation**:  - Musterlösung (Solution)  - Quality Assurance (validation)
-
-   ```powershell
-
-   python automation_ditele.py  - Erwartete Ergebnisse (Expected Results)- **Gemini 1.5 Pro**: Optimized configuration (32K tokens)
-
-   ```
-
-- **Professional formatting** (headings, bullets, page breaks)- **RAG Enhancement**: ChromaDB vector database
-
-**What happens:**
-
-- ✅ Processes **ALL documents** in source folder (100+)
-
-- ✅ 15-second pause between each document (rate limiting)
-
-- ✅ Progress tracking with detailed logs---### **IT Industry Focus**
-
-- ✅ Error recovery with retries
-
-- ✅ Uploads all generated documents to review folder- **Practical Scenarios**: Real office environments
-
-
-
-**Expected duration:** 8-10 hours for 100 documents## 📁 Project Structure- **Task-Based**: Step-by-step instructions
-
-
-
----- **Areas**: Project Management, Development, Testing, Infrastructure
-
-
-
-## ⚙️ Configuration```- **Solutions Included**: Complete answer keys
-
-
-
-### **Test Mode Settings**d:\FIAE Agents with RAG\
-
-
-
-Edit `automation_ditele.py`, lines 30-32:├── automation_phase1_content.py    ⭐ MAIN FILE### **Production Ready**
-
-
-
-```python├── app/- **Docker**: Containerized deployment
-
-# ========== CONFIGURATION ==========
-
-TEST_MODE = True  # True = Test only, False = Full run│   ├── config.py- **Monitoring**: Real-time health checks
-
-MAX_TEST_DOCUMENTS = 2  # Number of documents to process in test mode
-
-```│   ├── models.py- **WebSocket**: Live progress updates
-
-
-
-### **Rate Limiting**│   └── services/                   ⭐ ACTIVE SERVICES- **Error Handling**: Graceful fallbacks
-
-
-
-Edit `automation_ditele.py`, line 965:│       ├── google_services.py- **Security**: OAuth2 & service account support
-
-
-
-```python│       ├── intelligent_gemini_service.py
-
-await asyncio.sleep(15)  # Seconds between documents
-
-```│       ├── document_analyzer.py---
-
-
-
-**Recommended:** Keep 15 seconds to avoid Gemini API rate limits (14 requests/60 seconds)│       └── gemini_ai_service.py
-
-
-
-### **Google Drive Folders**├── archived_phase2_components/     (Phase 2 - restorable)## 📊 Content Generation Examples
-
-
-
-In `.env` file:├── credentials/                    (Google API)
-
-
-
-```bash├── chroma_db/                      (For future use)### **Input: 5000-word Document about "Cloud Computing"**
-
-# Source folder containing DOCX documents to process
-
-GOOGLE_DRIVE_CONTENT_SOURCE_FOLDER_ID=1YtN3_CftdJGgK9DFGLSMIky7PbYfFsX5├── .env                           ⭐ Configuration
-
-
-
-# Review folder where generated documents are uploaded├── requirements.txt**Generated Output:**
-
-GOOGLE_DRIVE_REVIEW_FOLDER_ID=1fBJdZKHLR-5jxfwKj8RLG45rKyZU8cXb
-
-```└── DOCUMENTATION.md               ⭐ Complete docs
-
-
-
-### **Logging**```| Content Type | Quantity | Details |
-
-
-
-```python|--------------|----------|---------|
-
-# In automation_ditele.py, logs are saved to:
-
-logs/ditele_automation_{timestamp}.log---| **PowerPoint Slides** | 33 slides | Title, agenda, theory (simple), concepts (professional), examples, summary |
-
-
-
-# Log levels: DEBUG, INFO, WARNING, ERROR| **Google Slides** | 33 slides | Same structure + interactive elements & animations |
-
-```
-
-## 📊 Performance| **IT Use Cases** | 12 pages | 4 scenarios × 3 pages each with solutions |
+Review the output in the Review folder before running full batches.
 
 ---
 
-| **Quiz Questions** | 50 questions | 20 easy + 20 medium + 10 hard with explanations |
+## Configuration
 
-## 📊 Output Examples
+Key `.env` variables (minimum):
 
-| Document Size | Use Cases | Processing Time || **Trainer Script** | 33 pages | One page per slide with timing & interaction points |
+- `GEMINI_API_KEY`: Gemini API key.
+- `GOOGLE_DRIVE_CONTENT_SOURCE_FOLDER_ID`: Drive folder containing source `.docx` documents.
+- `GOOGLE_DRIVE_REVIEW_FOLDER_ID`: Drive folder where generated `.docx` are uploaded.
+- `PERSONAL_GOOGLE_ACCOUNT_ENABLED=True`: Use personal OAuth (created by `personal_google_drive_service.py`).
+- `LOG_LEVEL`: e.g., `INFO`.
 
-### **Input Document**
+All settings are read via `app/config.py` (`from app.config import settings`).
 
-|--------------|-----------|-----------------|| **Knowledge Analysis** | 1 document | Backend processing metadata |
+---
+
+## Key Services (when extending)
+
+- `GeminiAIService` (`app/services/gemini_ai_service.py`): Low-level client with rate limiting (14/min), retries, and fallback model (`gemini-2.5-pro` → `gemini-2.5-flash`). Prefer using the high-level wrapper below.
+- `IntelligentGeminiService` (`app/services/intelligent_gemini_service.py`):
+  - `generate_from_prompt(prompt, content_type, timeout=...)`
+  - `generate_with_chunking(prompt_template, document_content, analysis_data, ...)`
+- `DocumentAnalyzer` (`app/services/document_analyzer.py`): `analyze_document(content, doc_name, use_ai=True)` returns topics, complexity, and content requirements with rule-based fallback.
+- `GoogleDriveService` (`app/services/google_services.py`): Lists/reads `.docx`, uploads results, optional Sheets logging (tab `Tabellenblatt1`).
+
+Minimal example:
+
+```python
+from app.services.intelligent_gemini_service import IntelligentGeminiService
+from app.services.document_analyzer import DocumentAnalyzer
+
+svc = IntelligentGeminiService()
+an = DocumentAnalyzer(gemini_service=svc.gemini_service)
+analysis = await an.analyze_document(content, "Beispiel.docx", use_ai=True)
+text = await svc.generate_from_prompt("Schreibe Lernziele …", content_type="use cases", timeout=180)
+```
+
+---
+
+## Conventions & Gotchas
+
+- Output language is German; prompts and validators assume German.
+- Strict DiTeLe structure and quality gates; solutions must be complete step‑by‑step and beginner‑friendly.
+- Forbidden wording (e.g., “Bot”, “KI/AI”, “Quality Score”) is removed by `_cleanup_batch_content`.
+- Use built services; do not call raw Gemini SDK directly.
+- Missing `python-docx` or OAuth token prevents `.docx` I/O and uploads.
+
+---
+
+## Troubleshooting
+
+- OAuth issues: Re-run `python personal_google_drive_service.py` and ensure `personal_google_token.pickle` exists.
+- 403/404 Drive errors: Verify folder IDs in `.env` and personal account access.
+- Rate limiting/timeouts: Calls are auto-retried; large documents may need more time.
+- Empty output: Check logs (Loguru to stdout) and confirm source file actually contains parsable text.
+
+---
+
+## Archived (Reference Only)
+
+`archived/` and `archived/phase2_components/` include the previous API/Dashboard, RAG, and multi-agent orchestration. They are not part of the active Phase 1 flow. See the READMEs in those folders if you plan a Phase 2 revival.
+
+---
+
+## License
+
+Internal project. If you plan to open-source, add a suitable license file.
 
 ```
 
